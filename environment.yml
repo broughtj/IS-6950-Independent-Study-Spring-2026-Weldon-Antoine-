@@ -17,12 +17,14 @@ dependencies:
   - jupyter
   - notebook
   - pip:
-      - jax[tpu] -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
+      # JAX ecosystem (use jax[tpu] on Google Cloud, jax on local)
+      - jax
+      - jaxlib
       - blackjax
-      - aesara
       - numpyro
       - oryx
       - pymc
+      - pytensor  # Modern replacement for aesara
       - tensorflow-probability
       - optax
       - flax
