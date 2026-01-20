@@ -1,0 +1,86 @@
+---
+title: "Chapter 17: Real Options - Lecture Notes"
+subtitle: "Focus on Section 17.3: Real Options in Practice"
+author: "Lecture Notes"
+date: "2026-01-20"
+format:
+  html:
+    toc: true
+    number-sections: true
+    code-fold: true
+---
+
+# Big Picture: What This Chapter Is Really About
+
+Up to this point, options lived in financial markets: stocks, bonds, futures. Chapter 17 makes a conceptual pivot: **Real assets behave like options once managers have discretion.**
+
+Factories, power plants, and oil fields are not passive cash-flow streams; they are **decision machines**. Decisions create *nonlinear payoffs*, which is exactly what option theory was invented to price.
+
+> **Key Principle:** You cannot value a real asset without simultaneously modeling how it will be operated.
+
+Section 17.3 is where this theory collides with reality.
+
+# From NPV to Real Options
+
+Traditional Net Present Value (NPV) assumes:
+- You invest now or never.
+- You operate continuously.
+- You cannot adapt once conditions change.
+
+Real options relax these assumptions:
+- **Waiting** is a call option.
+- **Shutdown** is a put option.
+- **Restart** is another call option.
+- **Staging** is a compound option.
+- **Operational flexibility** is an exotic option.
+
+# Section 17.3 — Real Options in Practice
+
+The authors identify four broad classes of real options:
+1. **Timing options** – when to invest.
+2. **Operating options** – shut down, restart, abandon.
+3. **Growth (strategic) options** – investing to create future options.
+4. **Flexibility options** – choosing inputs, outputs, or technologies.
+
+We focus on the canonical application: **Peak-load electricity generation**.
+
+## Peak-Load Electricity Generation
+
+This is *the* real-options model for energy markets.
+
+### The Physical Reality
+Electricity prices are highly volatile, spike during scarcity, mean-revert strongly, and can even be negative. A peak-load plant produces only when profitable and exists precisely to exploit price spikes. It is not a standard asset; it is a **portfolio of options**.
+
+### The Option Structure
+Each hour, the plant faces a decision:
+$$\text{Profit} = \max(S_{elec} - H \cdot S_{gas}, 0)$$
+Where:
+- $S_{elec}$ = electricity price
+- $S_{gas}$ = natural gas price
+- $H$ = heat rate (conversion efficiency)
+
+This payoff is identical to a **call option on electricity** with a **strike price tied to gas**, known as the **spark spread**. Owning a peak-load plant is equivalent to owning a strip of short-dated call options on the spark spread.
+
+### Static NPV vs Real-Options Value
+- **Static NPV:** Assumes continuous operation. Often yields negative NPV.
+- **Real-Options Logic:** Operate only when profitable. The value comes from **what you don't do**.
+
+> **Insight:** Peak-load plants are profitable because of shutdown flexibility, not high average prices. Electricity volatility is an equilibrium signal, not a "bug."
+
+# Strategic Implications
+
+Managerial flexibility adds value through:
+1. **Timing Options:** The right to wait for better market conditions.
+2. **Abandonment Options:** The safety net of shutting down a losing operation.
+3. **Growth Options:** Pilot projects that open doors to massive future markets.
+4. **Flexibility Options:** The ability to switch fuels or outputs based on prices.
+
+# Summary and Future Directions
+
+Real options are not a replacement for NPV; they are **NPV done correctly when decisions are endogenous**. Ignoring optionality leads to systematic undervaluation of real assets.
+
+This sets up:
+- Commodity extraction as an American option.
+- Shutdown and restart hysteresis.
+- Trigger-price economics.
+- Policy implications for energy markets.

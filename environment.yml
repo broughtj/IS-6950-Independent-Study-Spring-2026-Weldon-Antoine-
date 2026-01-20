@@ -1,0 +1,30 @@
+name: fintech-tpu
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.12
+  - pip
+  - polars
+  - matplotlib
+  - seaborn
+  - pandas
+  - scipy
+  - pyyaml
+  - ipykernel
+  - tqdm
+  - quarto
+  - jupyter
+  - notebook
+  - pip:
+      - jax[tpu] -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
+      - blackjax
+      - aesara
+      - numpyro
+      - oryx
+      - pymc
+      - tensorflow-probability
+      - optax
+      - flax
+      - chex
+      - distrax
