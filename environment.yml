@@ -30,3 +30,4 @@ dependencies:
       - flax
       - chex
       - distrax
+      - jaxopt  # Required by BlackJAX
