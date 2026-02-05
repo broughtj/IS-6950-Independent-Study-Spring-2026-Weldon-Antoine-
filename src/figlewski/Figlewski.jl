@@ -58,6 +58,7 @@ export
     decide_action,
     score_step!,
     size_by_cvar_forecast,
+    size_by_kelly_forecast,
     execute_trade!,
     update_feedback!,
     append_return!,

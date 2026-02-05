@@ -156,6 +156,7 @@ AgentState(horizon::Int) = AgentState(Float64[], fill(0.04, horizon), Feedback()
 struct UnifiedAgent{O,G}
     garch_model::G
     ohmc_config::Union{Prezo.OHMCConfig, Nothing}
+    cvar_ohmc_config::Union{Any, Nothing}  # Prezo.CVaROHMCConfig when set (Upgrade A)
     abc_method::Union{Prezo.ABCSMC, Nothing}
     cvar_alpha::Float64
     L_max::Float64
@@ -180,11 +181,15 @@ struct UnifiedAgent{O,G}
     # Control variate (Upgrade C)
     use_control_variate::Bool       # Blend OHMC with BS delta
     cv_base_weight::Float64         # Base weight on BS delta (0 = pure OHMC, 1 = pure BS)
+    # Kelly for scale (Upgrade A: Option B — OHMC+CVaR decides, Kelly sizes)
+    use_kelly_sizing::Bool          # Scale position by fractional Kelly
+    kelly_fraction::Float64         # e.g. 0.5 for half-Kelly
 end
 
 function UnifiedAgent(
     garch_model;
     ohmc_config = nothing,
+    cvar_ohmc_config = nothing,  # Prezo.CVaROHMCConfig for Upgrade A (CVaR inside OHMC)
     abc_method = nothing,
     cvar_alpha = 0.95,
     L_max = Inf,
@@ -209,15 +214,19 @@ function UnifiedAgent(
     # Control variate (Upgrade C)
     use_control_variate = true,  # Blend OHMC with BS delta
     cv_base_weight = 0.3,        # 30% BS delta, 70% OHMC (adjustable)
+    # Kelly for scale (Upgrade A Option B)
+    use_kelly_sizing = false,    # Set true to scale by fractional Kelly
+    kelly_fraction = 0.5,        # Half-Kelly
 )
     UnifiedAgent(
-        garch_model, ohmc_config, abc_method, cvar_alpha, L_max,
+        garch_model, ohmc_config, cvar_ohmc_config, abc_method, cvar_alpha, L_max,
         option, horizon, score_ema_decay,
         rebalance_threshold, max_days_no_trade,
         delta_ema_decay, gamma_correction_k,
         belief_penalty_lambda, huber_delta,
         use_state_costs, vol_cost_sensitivity, impact_coef,
-        use_control_variate, cv_base_weight
+        use_control_variate, cv_base_weight,
+        use_kelly_sizing, kelly_fraction
     )
 end
 
@@ -510,13 +519,42 @@ function decide_action(
         Prezo.numerical_greek(opt_tau, Prezo.Delta(), Prezo.BlackScholes(), data)
     end
 
-    if use_ohmc && agent.ohmc_config !== nothing && agent.option isa Prezo.EuropeanOption
-        # Create option with remaining time to expiry
-        opt_ohmc = if agent.option isa Prezo.EuropeanCall
-            Prezo.EuropeanCall(agent.option.strike, tau)
-        else
-            Prezo.EuropeanPut(agent.option.strike, tau)
+    # Option with remaining time to expiry (for OHMC / CVaR-OHMC)
+    opt_ohmc = if agent.option isa Prezo.EuropeanCall
+        Prezo.EuropeanCall(agent.option.strike, tau)
+    else
+        Prezo.EuropeanPut(agent.option.strike, tau)
+    end
+
+    # Upgrade A: CVaR-OHMC (Lagrangian CVaR inside OHMC) when config set
+    if use_ohmc && agent.cvar_ohmc_config !== nothing && agent.option isa Prezo.EuropeanOption && tau > 1e-4
+        res_cvar = Prezo.cvar_ohmc_price(opt_ohmc, data, agent.cvar_ohmc_config; rng = cfg.rng)
+        hedge_ratios_t0 = @view(res_cvar.hedge_ratios[1, :])
+        raw_ohmc_delta = mean(hedge_ratios_t0)
+        if !isnan(raw_ohmc_delta) && !isinf(raw_ohmc_delta)
+            blended_delta = if agent.use_control_variate
+                ohmc_std = std(hedge_ratios_t0)
+                adaptive_bs_weight = agent.cv_base_weight +
+                    (1 - agent.cv_base_weight) * clamp(ohmc_std * 2, 0.0, 0.5)
+                adaptive_bs_weight * bs_delta + (1 - adaptive_bs_weight) * raw_ohmc_delta
+            else
+                raw_ohmc_delta
+            end
+            if isnan(agent_state.delta_ema)
+                agent_state.delta_ema = blended_delta
+            else
+                α = 1 - agent.delta_ema_decay
+                agent_state.delta_ema = α * blended_delta + agent.delta_ema_decay * agent_state.delta_ema
+            end
+            smoothed_delta = agent_state.delta_ema
+            corrected_delta = apply_gamma_correction(agent, smoothed_delta, S, vol_t, tau, cfg)
+            final_delta = apply_belief_consistency(agent, corrected_delta, agent_state)
+            return clamp(final_delta, -2.0, 2.0)
         end
+    end
+
+    # Standard OHMC when no CVaR-OHMC config
+    if use_ohmc && agent.ohmc_config !== nothing && agent.option isa Prezo.EuropeanOption
         # Only run OHMC if there's meaningful time left
         if tau > 1e-4
             res = Prezo.ohmc_price(opt_ohmc, data, agent.ohmc_config; rng = cfg.rng)
@@ -756,6 +794,46 @@ function size_by_cvar_forecast(
 end
 
 # =============================================================================
+# Step 6b: Kelly for scale (Upgrade A Option B)
+# =============================================================================
+
+"""
+    size_by_kelly_forecast(agent::UnifiedAgent, agent_state::AgentState,
+                          raw_delta::Float64, S::Float64, n_sim::Int, rng;
+                          risk_free_daily::Float64 = 0.0) -> Float64
+
+Scale position by fractional Kelly using the distribution of one-period hedged returns.
+
+OHMC+CVaR chooses *what* to do (delta); Kelly chooses *how much*.
+Uses Prezo.kelly_continuous(μ, σ², r) with simulated returns from vol_forecast.
+"""
+function size_by_kelly_forecast(
+    agent::UnifiedAgent,
+    agent_state::AgentState,
+    raw_delta::Float64,
+    S::Float64,
+    n_sim::Int,
+    rng;
+    risk_free_daily::Float64 = 0.0,
+)
+    abs(raw_delta) < 1e-8 && return raw_delta
+
+    daily_vol = sqrt(agent_state.vol_forecast[1])
+    sims = randn(rng, n_sim) .* daily_vol
+    # One-period simple return: (exp(r) - 1)
+    returns = exp.(sims) .- 1.0
+    μ_return = mean(returns)
+    var_return = max(var(returns), 1e-12)
+
+    # Kelly for continuous returns: f* = (μ - r) / σ²
+    f_star = Prezo.kelly_continuous(μ_return, var_return, risk_free_daily)
+    # Fractional Kelly and clamp to [0, 1] so we don't lever beyond full size
+    scale = clamp(agent.kelly_fraction * f_star, 0.0, 1.0)
+
+    raw_delta * scale
+end
+
+# =============================================================================
 # Step 7: Execute — trade with costs, discreteness, slippage
 # =============================================================================
 
@@ -906,9 +984,16 @@ function step_unified!(
     prev_portfolio = prev_obs.cash + prev_obs.inventory * prev_obs.S
     score_step!(agent, agent_state, prev_obs, prev_portfolio)
 
-    # --- Step 6: Size position (CVaR) ---
+    # --- Step 6: Size position (CVaR then optionally Kelly) ---
     agent_state.feedback.constraint_hit = false
     sized_delta = size_by_cvar_forecast(agent, agent_state, raw_delta, env.state.S, cvar_n_sim, rng)
+    if agent.use_kelly_sizing
+        r_daily = env.config.r / 252
+        sized_delta = size_by_kelly_forecast(
+            agent, agent_state, sized_delta, env.state.S, cvar_n_sim, rng;
+            risk_free_daily = r_daily,
+        )
+    end
 
     # --- Step 7: Execute ---
     shares_traded, cost, fill_price = execute_trade!(env, sized_delta)
